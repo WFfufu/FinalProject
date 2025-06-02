@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知乎热榜数据看板</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; }
+        .header { background: #fff; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header h1 { color: #333; font-size: 28px; }
+        .header p { color: #666; margin-top: 5px; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .stat-card h3 { color: #333; font-size: 14px; margin-bottom: 10px; text-transform: uppercase; }
+        .stat-card .value { color: #007bff; font-size: 32px; font-weight: bold; }
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .chart-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .chart-card.full-width { grid-column: 1 / -1; }
+        .recent-items { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .item { padding: 15px; border-bottom: 1px solid #eee; }
+        .item:last-child { border-bottom: none; }
+        .item-rank { display: inline-block; background: #007bff; color: #fff; width: 30px; height: 30px; border-radius: 50%; text-align: center; line-height: 30px; font-weight: bold; margin-right: 15px; }
+        .item-title { font-size: 16px; color: #333; text-decoration: none; }
+        .item-title:hover { color: #007bff; }
+        .item-meta { color: #666; font-size: 12px; margin-top: 5px; }
+        .tag { background: #e3f2fd; color: #1976d2; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-right: 5px; }
+        .loading { text-align: center; padding: 50px; color: #666; }
+        @media (max-width: 768px) {
+            .charts-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>🔥 知乎热榜数据看板</h1>
+            <p>实时监控热榜趋势，数据驱动洞察</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 统计卡片 -->
+        <div class="stats-grid" id="stats-grid">
+            <div class="loading">正在加载统计数据...</div>
+        </div>
+
+        <!-- 图表网格 -->
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>📈 数据趋势</h3>
+                <div id="trend-chart" style="height: 350px;"></div>
+            </div>
+            <div class="chart-card">
+                <h3>📊 排名分布</h3>
+                <div id="rank-chart" style="height: 350px;"></div>
+            </div>
+            <div class="chart-card full-width">
+                <h3>🏷️ 热门标签</h3>
+                <div id="tag-chart" style="height: 400px;"></div>
+            </div>
+        </div>
+
+        <!-- 最新热榜 -->
+        <div class="recent-items">
+            <h3>🔥 最新热榜</h3>
+            <div id="recent-items">
+                <div class="loading">正在加载最新数据...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 加载统计数据
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats?days=7');
+                const stats = await response.json();
+                
+                if (stats.error) {
+                    document.getElementById('stats-grid').innerHTML = '<div class="loading">暂无数据</div>';
+                    return;
+                }
+
+                const statsHtml = `
+                    <div class="stat-card">
+                        <h3>总问题数</h3>
+                        <div class="value">${stats.total_questions}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>总记录数</h3>
+                        <div class="value">${stats.total_records}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>日均问题</h3>
+                        <div class="value">${stats.daily_average || 'N/A'}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>最新爬取</h3>
+                        <div class="value" style="font-size: 14px;">${stats.latest_crawl}</div>
+                    </div>
+                `;
+                
+                document.getElementById('stats-grid').innerHTML = statsHtml;
+            } catch (error) {
+                console.error('加载统计数据失败:', error);
+            }
+        }
+
+        // 加载最新热榜
+        async function loadRecentItems() {
+            try {
+                const response = await fetch('/api/recent-items?limit=20');
+                const items = await response.json();
+                
+                if (items.length === 0) {
+                    document.getElementById('recent-items').innerHTML = '<div class="loading">暂无数据</div>';
+                    return;
+                }
+
+                const itemsHtml = items.map(item => `
+                    <div class="item">
+                        <span class="item-rank">${item.rank}</span>
+                        <a href="${item.url}" target="_blank" class="item-title">${item.title}</a>
+                        <div class="item-meta">
+                            ${item.heat_value !== 'N/A' ? `热度: ${item.heat_value}` : ''}
+                            ${item.answer_count !== 'N/A' ? ` | 回答: ${item.answer_count}` : ''}
+                            ${item.crawl_time !== 'N/A' ? ` | 时间: ${item.crawl_time}` : ''}
+                            <div style="margin-top: 5px;">
+                                ${item.question_tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                document.getElementById('recent-items').innerHTML = itemsHtml;
+            } catch (error) {
+                console.error('加载最新热榜失败:', error);
+            }
+        }
+
+        // 加载图表
+        async function loadCharts() {
+            try {
+                // 趋势图
+                const trendResponse = await fetch('/api/chart/trend?days=7');
+                const trendData = await trendResponse.json();
+                Plotly.newPlot('trend-chart', trendData.data, trendData.layout, {responsive: true});
+
+                // 排名分布图
+                const rankResponse = await fetch('/api/chart/rank-distribution');
+                const rankData = await rankResponse.json();
+                Plotly.newPlot('rank-chart', rankData.data, rankData.layout, {responsive: true});
+
+                // 标签图
+                const tagResponse = await fetch('/api/chart/tags');
+                const tagData = await tagResponse.json();
+                Plotly.newPlot('tag-chart', tagData.data, tagData.layout, {responsive: true});
+            } catch (error) {
+                console.error('加载图表失败:', error);
+            }
+        }
+
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadRecentItems();
+            loadCharts();
+            
+            // 每5分钟自动刷新数据
+            setInterval(() => {
+                loadStats();
+                loadRecentItems();
+            }, 5 * 60 * 1000);
+        });
+    </script>
+</body>
+</html>
