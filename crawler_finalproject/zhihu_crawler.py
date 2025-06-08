@@ -15,6 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 import time
 import json
 import os
+import numpy as np
 import pickle
 import hashlib
 import re
@@ -27,8 +28,11 @@ from typing import List, Dict, Optional, Tuple
 import logging
 
 # 配置matplotlib中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+# 设置中文字体和样式
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['figure.dpi'] = 100
+plt.rcParams['savefig.dpi'] = 300
 
 class EnhancedZhihuCrawler:
     """增强版知乎爬虫 - 支持定时任务、数据分析、去重等功能"""
@@ -582,18 +586,14 @@ class HotListAnalyzer:
         
         return analysis
     
+
     def generate_trend_charts(self, days: int = 7):
-        """生成趋势图表"""
+        """生成6个独立的分析图表"""
         df = self.load_all_data()
         
         if df.empty:
-            print("没有数据可用于生成图表")
-            return
-        
-        # 设置图表样式
-        plt.style.use('seaborn-v0_8')
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle(f'知乎热榜数据分析 - 最近{days}天', fontsize=16, fontweight='bold')
+            print("❌ 没有数据可用于生成图表")
+            return None
         
         # 过滤数据
         cutoff_date = datetime.now() - timedelta(days=days)
@@ -602,32 +602,176 @@ class HotListAnalyzer:
         else:
             recent_df = df
         
-        # 1. 每日爬取数量趋势
+        if recent_df.empty:
+            print(f"❌ 最近{days}天没有数据")
+            return None
+        
+        print(f"📊 正在生成最近{days}天的6个独立分析图表...")
+        
+        # 设置matplotlib参数
+        plt.rcParams.update({
+            'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],
+            'axes.unicode_minus': False,
+            'figure.dpi': 100,
+            'savefig.dpi': 300,
+            'font.size': 14,
+            'axes.titlesize': 18,
+            'axes.labelsize': 14,
+            'xtick.labelsize': 12,
+            'ytick.labelsize': 12,
+            'legend.fontsize': 12
+        })
+        
+        # 颜色配置
+        colors = {
+            'primary': '#3498db',
+            'secondary': '#e74c3c', 
+            'success': '#2ecc71',
+            'warning': '#f39c12',
+            'info': '#9b59b6',
+            'dark': '#34495e'
+        }
+        
+        chart_files = []
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # =================== 图表1: 每日数据采集趋势 ===================
+        plt.figure(figsize=(12, 8))
         if 'date' in recent_df.columns:
             daily_counts = recent_df.groupby('date').size()
-            daily_counts.plot(kind='line', ax=axes[0,0], marker='o', color='#1f77b4')
-            axes[0,0].set_title('每日爬取数量趋势')
-            axes[0,0].set_xlabel('日期')
-            axes[0,0].set_ylabel('问题数量')
-            axes[0,0].grid(True, alpha=0.3)
+            
+            plt.plot(daily_counts.index, daily_counts.values, 
+                    marker='o', linewidth=4, markersize=12, 
+                    color=colors['primary'], markerfacecolor='white', 
+                    markeredgewidth=3, markeredgecolor=colors['primary'],
+                    label='每日问题数')
+            
+            plt.fill_between(daily_counts.index, daily_counts.values, 
+                            alpha=0.3, color=colors['primary'])
+            
+            # 添加趋势线
+            if len(daily_counts) > 1:
+                z = np.polyfit(range(len(daily_counts)), daily_counts.values, 1)
+                p = np.poly1d(z)
+                plt.plot(daily_counts.index, p(range(len(daily_counts))), 
+                        "--", alpha=0.8, color=colors['secondary'], linewidth=3,
+                        label='趋势线')
+            
+            # 标注最高点
+            max_idx = daily_counts.idxmax()
+            max_val = daily_counts.max()
+            plt.annotate(f'峰值\n{max_val}个问题', 
+                        xy=(max_idx, max_val),
+                        xytext=(max_idx, max_val + max_val*0.1),
+                        arrowprops=dict(arrowstyle='->', color=colors['secondary'], lw=2),
+                        fontweight='bold', ha='center', fontsize=12,
+                        bbox=dict(boxstyle="round,pad=0.5", facecolor='yellow', alpha=0.8))
+            
+            plt.title(f'每日数据采集趋势 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
+            plt.xlabel('日期', fontweight='bold')
+            plt.ylabel('问题数量', fontweight='bold')
+            plt.grid(True, alpha=0.3, linestyle='--')
+            plt.legend()
+            plt.xticks(rotation=45)
+        else:
+            plt.text(0.5, 0.5, '暂无日期数据', transform=plt.gca().transAxes,
+                    ha='center', va='center', fontsize=20, color='gray')
+            plt.title(f'每日数据采集趋势 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
         
-        # 2. 排名分布
+        plt.tight_layout()
+        chart1_path = os.path.join(self.analysis_dir, f'chart1_daily_trend_{timestamp}.png')
+        plt.savefig(chart1_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart1_path)
+        print(f"✅ 图表1已保存: {chart1_path}")
+        
+        # =================== 图表2: 排名区间分布 ===================
+        plt.figure(figsize=(12, 8))
         if 'rank' in recent_df.columns:
-            rank_counts = recent_df['rank'].value_counts().head(20)
-            rank_counts.plot(kind='bar', ax=axes[0,1], color='#ff7f0e')
-            axes[0,1].set_title('排名分布（Top 20）')
-            axes[0,1].set_xlabel('排名')
-            axes[0,1].set_ylabel('出现次数')
+            rank_ranges = ['1-10名\n(热门)', '11-20名\n(优秀)', '21-30名\n(良好)', '31-40名\n(一般)', '41-50名\n(普通)']
+            range_counts = []
+            
+            for i in range(5):
+                start = i * 10 + 1
+                end = (i + 1) * 10
+                count = recent_df[recent_df['rank'].between(start, end)]['rank'].count()
+                range_counts.append(count)
+            
+            colors_list = [colors['success'], colors['primary'], colors['warning'], 
+                        colors['secondary'], colors['info']]
+            
+            bars = plt.bar(rank_ranges, range_counts, color=colors_list, 
+                        alpha=0.8, edgecolor='white', linewidth=3)
+            
+            # 添加数值标签
+            for bar, count in zip(bars, range_counts):
+                if count > 0:
+                    plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                            f'{count}个', ha='center', va='bottom', fontweight='bold', fontsize=14)
+            
+            plt.title(f'排名区间分布 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
+            plt.xlabel('排名区间', fontweight='bold')
+            plt.ylabel('问题数量', fontweight='bold')
+            plt.grid(True, alpha=0.3, axis='y')
+        else:
+            plt.text(0.5, 0.5, '暂无排名数据', transform=plt.gca().transAxes,
+                    ha='center', va='center', fontsize=20, color='gray')
+            plt.title(f'排名区间分布 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
         
-        # 3. 回答数分布
-        if 'answer_count' in recent_df.columns and recent_df['answer_count'].sum() > 0:
+        plt.tight_layout()
+        chart2_path = os.path.join(self.analysis_dir, f'chart2_rank_distribution_{timestamp}.png')
+        plt.savefig(chart2_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart2_path)
+        print(f"✅ 图表2已保存: {chart2_path}")
+        
+        # =================== 图表3: 回答数分布分析 ===================
+        plt.figure(figsize=(12, 8))
+        if 'answer_count' in recent_df.columns and not recent_df['answer_count'].isna().all():
             answer_counts = recent_df['answer_count'].dropna()
-            answer_counts.hist(bins=20, ax=axes[1,0], color='#2ca02c', alpha=0.7)
-            axes[1,0].set_title('回答数分布')
-            axes[1,0].set_xlabel('回答数')
-            axes[1,0].set_ylabel('问题数量')
+            if not answer_counts.empty and answer_counts.sum() > 0:
+                # 绘制直方图
+                n, bins, patches = plt.hist(answer_counts, bins=30, 
+                                        color=colors['success'], alpha=0.7, 
+                                        edgecolor='white', linewidth=1)
+                
+                # 添加统计线
+                mean_val = answer_counts.mean()
+                median_val = answer_counts.median()
+                plt.axvline(mean_val, color=colors['secondary'], linestyle='--', 
+                        linewidth=4, label=f'均值: {mean_val:.1f}个回答')
+                plt.axvline(median_val, color=colors['warning'], linestyle='--', 
+                        linewidth=4, label=f'中位数: {median_val:.1f}个回答')
+                
+                # 添加统计信息
+                stats_text = f'总问题数: {len(answer_counts)}\n最多回答: {answer_counts.max()}个\n最少回答: {answer_counts.min()}个'
+                plt.text(0.98, 0.98, stats_text, transform=plt.gca().transAxes,
+                        verticalalignment='top', horizontalalignment='right',
+                        bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue', alpha=0.8),
+                        fontsize=12, fontweight='bold')
+                
+                plt.title(f'回答数分布分析 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
+                plt.xlabel('回答数', fontweight='bold')
+                plt.ylabel('问题数量', fontweight='bold')
+                plt.legend(loc='upper right')
+                plt.grid(True, alpha=0.3)
+            else:
+                plt.text(0.5, 0.5, '暂无有效回答数据', transform=plt.gca().transAxes,
+                        ha='center', va='center', fontsize=20, color='gray')
+        else:
+            plt.text(0.5, 0.5, '暂无回答数据', transform=plt.gca().transAxes,
+                    ha='center', va='center', fontsize=20, color='gray')
+            plt.title(f'回答数分布分析 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
         
-        # 4. 热门标签
+        plt.tight_layout()
+        chart3_path = os.path.join(self.analysis_dir, f'chart3_answer_distribution_{timestamp}.png')
+        plt.savefig(chart3_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart3_path)
+        print(f"✅ 图表3已保存: {chart3_path}")
+        
+        # =================== 图表4: 热门话题标签 ===================
+        plt.figure(figsize=(12, 10))
         if 'question_tags' in recent_df.columns:
             all_tags = []
             for tags in recent_df['question_tags'].dropna():
@@ -635,19 +779,191 @@ class HotListAnalyzer:
                     all_tags.extend(tags)
             
             if all_tags:
-                tag_counts = pd.Series(all_tags).value_counts().head(10)
-                tag_counts.plot(kind='barh', ax=axes[1,1], color='#d62728')
-                axes[1,1].set_title('热门标签（Top 10）')
-                axes[1,1].set_xlabel('出现次数')
+                tag_counts = pd.Series(all_tags).value_counts().head(15)
+                
+                # 创建渐变色
+                colors_gradient = plt.cm.Set3(np.linspace(0, 1, len(tag_counts)))
+                
+                bars = plt.barh(range(len(tag_counts)), tag_counts.values, 
+                            color=colors_gradient, alpha=0.8, 
+                            edgecolor='white', linewidth=2)
+                
+                plt.yticks(range(len(tag_counts)), tag_counts.index, fontsize=12)
+                plt.title(f'热门话题标签排行榜 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
+                plt.xlabel('出现次数', fontweight='bold')
+                plt.grid(True, alpha=0.3, axis='x')
+                
+                # 添加数值标签
+                for i, (bar, count) in enumerate(zip(bars, tag_counts.values)):
+                    plt.text(bar.get_width() + max(tag_counts.values) * 0.01, 
+                            bar.get_y() + bar.get_height()/2,
+                            f'{count}次', ha='left', va='center', fontweight='bold', fontsize=11)
+                
+                # 添加排名标签
+                for i, bar in enumerate(bars):
+                    plt.text(bar.get_width() * 0.05, bar.get_y() + bar.get_height()/2,
+                            f'#{i+1}', ha='left', va='center', fontweight='bold', 
+                            fontsize=10, color='white')
+            else:
+                plt.text(0.5, 0.5, '暂无标签数据', transform=plt.gca().transAxes,
+                        ha='center', va='center', fontsize=20, color='gray')
+        else:
+            plt.text(0.5, 0.5, '暂无标签数据', transform=plt.gca().transAxes,
+                    ha='center', va='center', fontsize=20, color='gray')
+            plt.title(f'热门话题标签排行榜 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
         
         plt.tight_layout()
+        chart4_path = os.path.join(self.analysis_dir, f'chart4_popular_tags_{timestamp}.png')
+        plt.savefig(chart4_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart4_path)
+        print(f"✅ 图表4已保存: {chart4_path}")
         
-        # 保存图表
-        chart_path = os.path.join(self.analysis_dir, f'trend_analysis_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
-        plt.savefig(chart_path, dpi=300, bbox_inches='tight')
-        plt.show()
+        # =================== 图表5: 24小时活跃度分布 ===================
+        plt.figure(figsize=(14, 8))
+        if 'crawl_time' in recent_df.columns:
+            df_hour = recent_df.copy()
+            df_hour['hour'] = df_hour['crawl_time'].dt.hour
+            hourly_counts = df_hour.groupby('hour').size()
+            
+            # 创建24小时完整数据
+            full_hours = pd.Series(0, index=range(24))
+            full_hours.update(hourly_counts)
+            
+            # 创建渐变色效果
+            colors_hour = []
+            max_count = full_hours.max() if full_hours.max() > 0 else 1
+            for count in full_hours.values:
+                intensity = count / max_count
+                colors_hour.append(plt.cm.viridis(intensity))
+            
+            bars = plt.bar(full_hours.index, full_hours.values, 
+                        color=colors_hour, alpha=0.8, 
+                        edgecolor='white', linewidth=1.5)
+            
+            # 标注peak时段
+            if not hourly_counts.empty:
+                peak_hour = hourly_counts.idxmax()
+                peak_count = hourly_counts.max()
+                plt.annotate(f'高峰时段\n{peak_hour}:00\n活跃度: {peak_count}', 
+                            xy=(peak_hour, peak_count),
+                            xytext=(peak_hour+3, peak_count+2),
+                            arrowprops=dict(arrowstyle='->', color=colors['secondary'], lw=3),
+                            fontweight='bold', ha='center', fontsize=12,
+                            bbox=dict(boxstyle="round,pad=0.5", facecolor='yellow', alpha=0.9))
+            
+            # 时段标注
+            time_periods = {
+                (0, 6): '深夜时段',
+                (6, 12): '上午时段', 
+                (12, 18): '下午时段',
+                (18, 24): '晚间时段'
+            }
+            
+            for (start, end), period in time_periods.items():
+                avg_activity = full_hours[start:end].mean()
+                mid_hour = (start + end) // 2
+                plt.text(mid_hour, avg_activity + max_count * 0.1, period,
+                        ha='center', va='bottom', fontweight='bold', fontsize=10,
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray', alpha=0.7))
+            
+            plt.title(f'24小时活跃度分布 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
+            plt.xlabel('小时', fontweight='bold')
+            plt.ylabel('活跃度', fontweight='bold')
+            plt.xticks(range(0, 24, 2), [f'{h}:00' for h in range(0, 24, 2)])
+            plt.grid(True, alpha=0.3, axis='y')
+        else:
+            plt.text(0.5, 0.5, '暂无时间数据', transform=plt.gca().transAxes,
+                    ha='center', va='center', fontsize=20, color='gray')
+            plt.title(f'24小时活跃度分布 - 最近{days}天', fontweight='bold', fontsize=20, pad=20)
         
-        print(f"图表已保存到: {chart_path}")
+        plt.tight_layout()
+        chart5_path = os.path.join(self.analysis_dir, f'chart5_hourly_activity_{timestamp}.png')
+        plt.savefig(chart5_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart5_path)
+        print(f"✅ 图表5已保存: {chart5_path}")
+        
+        # =================== 图表6: 数据质量与统计指标 ===================
+        plt.figure(figsize=(12, 8))
+        
+        # 计算指标
+        total_records = len(recent_df)
+        unique_questions = recent_df['question_hash'].nunique() if 'question_hash' in recent_df.columns else len(recent_df)
+        
+        # 数据完整率
+        completeness_scores = []
+        if 'answer_count' in recent_df.columns:
+            answer_completeness = (recent_df['answer_count'].notna().sum() / len(recent_df)) * 100
+            completeness_scores.append(('回答数完整率', answer_completeness))
+        
+        if 'question_tags' in recent_df.columns:
+            tag_completeness = (recent_df['question_tags'].apply(
+                lambda x: len(x) > 0 if isinstance(x, list) else False).sum() / len(recent_df)) * 100
+            completeness_scores.append(('标签完整率', tag_completeness))
+        
+        # 重复率
+        duplicate_rate = ((total_records - unique_questions) / total_records * 100) if total_records > 0 else 0
+        
+        # 绘制圆饼图显示数据质量
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # 左图：数据完整性
+        if completeness_scores:
+            labels = [item[0] for item in completeness_scores]
+            sizes = [item[1] for item in completeness_scores]
+            colors_pie = [colors['success'], colors['info']][:len(sizes)]
+            
+            ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90,
+                colors=colors_pie, textprops={'fontsize': 12, 'fontweight': 'bold'})
+            ax1.set_title('数据完整性分析', fontweight='bold', fontsize=16, pad=20)
+        
+        # 右图：关键指标
+        metrics = ['总记录数', '独特问题', f'重复率({duplicate_rate:.1f}%)']
+        values = [total_records, unique_questions, duplicate_rate]
+        colors_metrics = [colors['primary'], colors['success'], colors['warning']]
+        
+        bars = ax2.bar(metrics, values, color=colors_metrics, 
+                    alpha=0.8, edgecolor='white', linewidth=2)
+        
+        ax2.set_title('关键统计指标', fontweight='bold', fontsize=16, pad=20)
+        ax2.set_ylabel('数值', fontweight='bold')
+        ax2.grid(True, alpha=0.3, axis='y')
+        
+        # 添加数值标签
+        for bar, value, metric in zip(bars, values, metrics):
+            if '率' in metric:
+                label = f'{value:.1f}%'
+            else:
+                label = f'{int(value):,}'
+            
+            ax2.text(bar.get_x() + bar.get_width()/2, 
+                    bar.get_height() + max(values) * 0.02,
+                    label, ha='center', va='bottom', fontweight='bold', fontsize=12)
+        
+        plt.suptitle(f'数据质量与统计分析 - 最近{days}天', fontweight='bold', fontsize=20, y=0.95)
+        plt.tight_layout()
+        chart6_path = os.path.join(self.analysis_dir, f'chart6_data_quality_{timestamp}.png')
+        plt.savefig(chart6_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        chart_files.append(chart6_path)
+        print(f"✅ 图表6已保存: {chart6_path}")
+        
+        # 生成汇总信息
+        print(f"\n🎉 所有图表生成完成！")
+        print(f"📁 保存位置: {self.analysis_dir}")
+        print(f"📊 图表列表:")
+        for i, chart_file in enumerate(chart_files, 1):
+            filename = os.path.basename(chart_file)
+            print(f"   {i}. {filename}")
+        
+        print(f"\n📈 数据概览:")
+        print(f"   • 分析周期: {days} 天")
+        print(f"   • 总记录数: {total_records:,} 条")
+        print(f"   • 独特问题: {unique_questions:,} 个")
+        print(f"   • 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        return chart_files
     
     def generate_report(self, days: int = 7) -> str:
         """生成分析报告"""
